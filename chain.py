@@ -13,6 +13,7 @@ class Blockchain:
         self.nodes = set()
         # genesis block
         self.add_block(previous_hash='1', proof=12)
+        self.wallets=[]
     
 
     def register_node(self, address):
@@ -210,7 +211,24 @@ def consensus():
         }
     
     return jsonify(response), 200
-
+    
+@app.route('/wallet/new', methods=['POST'])
+def wallet_new():
+	random_gen = Crypto.Random.new().read
+	private_key = RSA.generate(1024, random_gen)
+	public_key = private_key.publickey()
+	response = {
+		'message': 'wallet created successfully, please keep your keys protected and private',
+		'private_key': binascii.hexlify(private_key.exportKey(format='DER')).decode('ascii'),
+		'public_key': binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii')
+	}
+	wallet={
+		"public_key": binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii'),
+		"wallet_address": binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii'),
+		"amount": 0
+	}
+	self.wallets.append(wallet)
+	return jsonify(response), 201
 
 if __name__ == "__main__":
     from argparse import ArgumentParser
