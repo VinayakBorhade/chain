@@ -5,6 +5,40 @@ from uuid import uuid4
 from flask import Flask, jsonify, request
 import requests
 from urllib.parse import urlparse
+from collections import OrderedDict
+import binascii
+import Crypto
+import Crypto.Random
+from Crypto.Hash import SHA
+from Crypto.PublicKey import RSA
+from Crypto.Signature import PKCS1_v1_5
+import rsa
+
+class Transaction:
+
+    def __init__(self, sender_address, sender_private_key, recipient_address, value):
+        self.sender_address = sender_address
+        self.sender_private_key = sender_private_key
+        self.recipient_address = recipient_address
+        self.value = value
+
+    def __getattr__(self, attr):
+        return self.data[attr]
+
+    def to_dict(self):
+        return OrderedDict({'sender_address': self.sender_address,
+                            'recipient_address': self.recipient_address,
+                            'value': self.value})
+
+    def sign_transaction(self):
+        """
+        Sign transaction with private key
+        """
+        private_key = RSA.importKey(binascii.unhexlify(self.sender_private_key))
+        signer = PKCS1_v1_5.new(private_key)
+        h = SHA.new(str(self.to_dict()).encode('utf8'))
+        return binascii.hexlify(signer.sign(h)).decode('ascii')
+
 
 class Blockchain:
     def __init__(self):
@@ -13,6 +47,7 @@ class Blockchain:
         self.nodes = set()
         # genesis block
         self.add_block(previous_hash='1', proof=12)
+        self.wallets=[]
     
 
     def register_node(self, address):
@@ -77,10 +112,11 @@ class Blockchain:
     def last_block(self):
         return self.chain[-1]
     
-    def new_transaction(self, sender, recipient, amount):
+    def new_transaction(self, sender, recipient, signature, amount):
         ts = {
             "sender": sender,
             "recipient": recipient,
+            "signature": signature,
             "amount": amount
         }
         self.current_transactions.append(ts)
@@ -130,6 +166,7 @@ def mine():
     blockchain.new_transaction(
         sender='0',
         recipient=node_identifier,
+        signature='0',
         amount=20
         )
     previous_hash = blockchain.hash(last_block)
@@ -146,20 +183,54 @@ def mine():
 
     return jsonify(response), 200
 
+def verify_transaction_signature(sender_address, signature, transaction):
+	"""
+	Check that the provided signature corresponds to transaction
+	signed by the public key (sender_address)
+	"""
+	public_key = RSA.importKey(binascii.unhexlify(sender_address))
+	verifier = PKCS1_v1_5.new(public_key)
+	h = SHA.new(str(transaction).encode('utf8'))
+	return verifier.verify(h, binascii.unhexlify(signature))
+
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
     values = request.get_json()
 
-    required = ['sender', 'recipient', 'amount']
+    required = ['sender', 'recipient', 'signature', 'amount']
 
     if not all(k in values for k in required):
         return 'Missing Values', 400
     
     sender = values['sender']
     recipient = values['recipient']
-    amount = values['amount']
-    index = blockchain.new_transaction(sender,
-                        recipient,amount)
+    signature = values['signature']
+    amount = int(values['amount'])
+    
+    sender_wallet=None
+    recipient_wallet=None
+    for wallet in blockchain.wallets:
+    	if wallet['wallet_address']==sender:
+    		sender_wallet=wallet
+    	if wallet['wallet_address']==recipient:
+    		recipient_wallet=wallet
+    if sender_wallet is None :
+    	return "no such wallet exists", 400
+    if recipient_wallet is None:
+    	return "no such wallet exists", 400
+    if sender_wallet['amount']<amount:
+    	return "not enough balance", 400
+    
+    transaction=OrderedDict({
+        'sender_address': sender, 
+        'recipient_address': recipient, 
+        'value': amount})
+    transaction_verification=verify_transaction_signature(sender, signature, transaction)
+    print("verfication: ", transaction_verification)
+    if transaction_verification==False:
+        return "invalid signature, please recheck it", 400
+    
+    index = blockchain.new_transaction(sender, recipient, signature, amount)
     
     response = {
         'message': f'Block #{index}'
@@ -210,6 +281,55 @@ def consensus():
         }
     
     return jsonify(response), 200
+    
+@app.route('/wallet/new', methods=['POST'])
+def wallet_new():
+	random_gen = Crypto.Random.new().read
+	private_key = RSA.generate(1024, random_gen)
+	public_key = private_key.publickey()
+	# (public_key, private_key) = rsa.newkeys(1024)
+	# public_key=public_key.save_pkcs1(format='PEM')
+	# private_key=private_key.save_pkcs1(format='PEM')
+	response = {
+		'message': 'wallet created successfully, please keep your keys protected and private',
+		'private_key': binascii.hexlify(private_key.exportKey(format='DER')).decode('ascii'),
+		'public_key': binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii')
+	}
+	wallet={
+		"public_key": binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii'),
+		"wallet_address": binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii'),
+		"amount": 0
+	}
+	blockchain.wallets.append(wallet)
+	return jsonify(response), 201
+	
+@app.route('/wallet/balance', methods=['GET'])
+def wallet_balance():
+	public_key=request.headers['public_key']
+	balance=-1
+	for wallet in blockchain.wallets:
+		if wallet['public_key']==public_key:
+			balance=wallet['amount']
+			break
+	if balance==-1:
+		return jsonify({
+			'message':'wallet is invalid'
+		}), 404
+	return jsonify({
+		'wallet balance: ': balance
+	}), 200
+
+@app.route('/transaction/sign', methods=['GET'])
+def transaction_sign():
+	sender_wallet=request.headers['sender_wallet']
+	recipient_wallet=request.headers['recipient_wallet']
+	private_key=request.headers['private_key']
+	amount=int(request.headers['amount'])
+	transaction=Transaction(sender_wallet, private_key, recipient_wallet, amount)
+	signature=transaction.sign_transaction()
+	return jsonify({
+		'signature': signature
+	}), 200
 
 
 if __name__ == "__main__":
