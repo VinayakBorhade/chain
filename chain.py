@@ -193,6 +193,10 @@ def verify_transaction_signature(sender_address, signature, transaction):
 	h = SHA.new(str(transaction).encode('utf8'))
 	return verifier.verify(h, binascii.unhexlify(signature))
 
+# every transaction that is created by the method below, 
+# has wallet address of the sender and recipient involved in / associated with the transaction
+# alongwith the amount and the signature of the recipient for verifying that the transaction is 
+# done by valid recipient
 @app.route('/transactions/new', methods=['POST'])
 def new_transaction():
     values = request.get_json()
@@ -285,6 +289,8 @@ def consensus():
     
     return jsonify(response), 200
     
+# this route generates a new wallet and returns the key pair and address with zero balance
+# we can set some default balance for every wallet created in case for amount transactions testing
 @app.route('/wallet/new', methods=['POST'])
 def wallet_new():
 	random_gen = Crypto.Random.new().read
@@ -302,11 +308,12 @@ def wallet_new():
 	wallet={
 		"public_key": binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii'),
 		"wallet_address": binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii'),
-		"amount": 0
+		"amount": 0  # set the default amount value here
 	}
 	blockchain.wallets.append(wallet)
 	return jsonify(response), 201
 	
+# this route is used to query blockchain for getting the wallet balance for the given wallet address
 @app.route('/wallet/balance', methods=['GET'])
 def wallet_balance():
 	wallet_address=request.headers['wallet_address']
@@ -325,6 +332,8 @@ def wallet_balance():
 		'wallet balance: ': balance
 	}), 200
 
+# this is a utility method for signing the transaction and thus getting a signature
+# this signature is used as input for transfering amount between wallets on this blockchain
 @app.route('/transaction/sign', methods=['GET'])
 def transaction_sign():
 	sender_wallet=request.headers['sender_wallet']
