@@ -197,13 +197,13 @@ def verify_transaction_signature(sender_address, signature, transaction):
 def new_transaction():
     values = request.get_json()
 
-    required = ['sender', 'recipient', 'signature', 'amount']
+    required = ['sender_wallet', 'recipient_wallet', 'signature', 'amount']
 
     if not all(k in values for k in required):
         return 'Missing Values', 400
     
-    sender = values['sender']
-    recipient = values['recipient']
+    sender = values['sender_wallet']
+    recipient = values['recipient_wallet']
     signature = values['signature']
     amount = int(values['amount'])
     
@@ -231,6 +231,9 @@ def new_transaction():
         return "invalid signature, please recheck it", 400
     
     index = blockchain.new_transaction(sender, recipient, signature, amount)
+    
+    sender_wallet["amount"]-=amount
+    recipient_wallet["amount"]+=amount
     
     response = {
         'message': f'Block #{index}'
@@ -292,6 +295,7 @@ def wallet_new():
 	# private_key=private_key.save_pkcs1(format='PEM')
 	response = {
 		'message': 'wallet created successfully, please keep your keys protected and private',
+		'wallet_address': binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii'),
 		'private_key': binascii.hexlify(private_key.exportKey(format='DER')).decode('ascii'),
 		'public_key': binascii.hexlify(public_key.exportKey(format='DER')).decode('ascii')
 	}
@@ -305,13 +309,15 @@ def wallet_new():
 	
 @app.route('/wallet/balance', methods=['GET'])
 def wallet_balance():
-	public_key=request.headers['public_key']
+	wallet_address=request.headers['wallet_address']
 	balance=-1
+	flag=False
 	for wallet in blockchain.wallets:
-		if wallet['public_key']==public_key:
+		if wallet['public_key']==wallet_address:
 			balance=wallet['amount']
+			flag=True
 			break
-	if balance==-1:
+	if flag==False:
 		return jsonify({
 			'message':'wallet is invalid'
 		}), 404
